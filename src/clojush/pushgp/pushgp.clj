@@ -305,6 +305,51 @@
                                   [next-novelty-archive nil])
           :else [nil (final-report generation best @push-argmap)])))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Adaptive Genetic Source
+
+(defn add-new-instructions
+  [cts]
+  (loop [dcdf (:dcdf (last @adaptive-source))
+         counts cts]
+    (when (seq counts)
+      (let [key (first (keys counts))
+            value (get counts key)]
+        (swap! adaptive-source conj {:instruction key :count value :dcdf (+ value dcdf)})
+        (recur (+ dcdf value) (dissoc counts key))))))
+
+(defn update-adaptive-source
+  [cts]
+  (loop [dcdf 0
+         index 0
+         counts cts]
+    (if (= index (count @adaptive-source))
+      (add-new-instructions counts)
+      (let [item (nth @adaptive-source index)
+            instr (:instruction item)
+            currcount (:count item)
+            addition (get counts instr 0)
+            newcount (+ currcount addition)
+            newdcdf (+ dcdf newcount)]
+        (swap! adaptive-source #(assoc-in % [index] {:instruction instr :count newcount :dcdf newdcdf}))
+        (recur newdcdf (inc index) (dissoc counts instr))))))
+
+(defn process-adaptive-source
+  "Updates the adaptive genetic source for each generation."
+  []
+  (let [counts (frequencies @current-instructions)]
+    (reset! current-instructions [])
+    (update-adaptive-source counts)))
+
+(defn finish-up
+  [return-val]
+  (println "\nAdaptive Source")
+  (doseq [item @adaptive-source]
+    (println item))
+  return-val)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defn pushgp
   "The top-level routine of pushgp."
   ([] (pushgp '()))
@@ -324,8 +369,9 @@
      (when (:print-timings @push-argmap)
        (r/config-data! [:initialization-ms] (:initialization @timer-atom)))
      (println "\n;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;")
-     (doseq [thing (:atom-generators @push-argmap)]
-       (swap! selected-instruction-counts assoc thing 1))
+     ;; Code to initialize the starting adaptive genetic source.
+     (doseq [[index instruction] (map-indexed vector (:atom-generators @push-argmap))]
+       (swap! adaptive-source conj {:instruction instruction :count 1 :dcdf (inc index)}))
      (println "\nGenerating initial population...") (flush)
      (let [pop-agents (make-pop-agents @push-argmap)
            child-agents (make-child-agents @push-argmap)
@@ -335,6 +381,8 @@
          (let [[next-novelty-archive return-val]
                (process-generation rand-gens pop-agents child-agents
                                    generation novelty-archive @push-argmap)]
+           ;; Generation has been processed; now process the adaptive source
+           (process-adaptive-source)
            (if (nil? next-novelty-archive)
-             return-val
+             (finish-up return-val)
              (recur (inc generation) next-novelty-archive))))))))
