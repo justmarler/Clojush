@@ -305,51 +305,21 @@
                                   [next-novelty-archive nil])
           :else [nil (final-report generation best @push-argmap)])))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Adaptive Genetic Source
+;; -------------------------- Concatenation Stuff ------------------------------
 
-(defn add-new-instructions
-  [cts]
-  (loop [dcdf 0;(:dcdf (last @adaptive-source)) Commented this out because new dcdf will be 0
-         counts cts]
-    (when (seq counts)
-      (let [key (first (keys counts))
-            value (get counts key)]
-        (swap! adaptive-source conj {:instruction key :count value :dcdf (+ value dcdf)})
-        (recur (+ dcdf value) (dissoc counts key))))))
-
-;; (defn update-adaptive-source
-;;   [cts]
-;;   (loop [dcdf 0
-;;          index 0
-;;          counts cts]
-;;     (if (= index (count @adaptive-source))
-;;       (add-new-instructions counts)
-;;       (let [item (nth @adaptive-source index)
-;;             instr (:instruction item)
-;;             currcount (:count item)
-;;             addition (get counts instr 0)
-;;             newcount (+ currcount addition)
-;;             newdcdf (+ dcdf newcount)]
-;;         (swap! adaptive-source #(assoc-in % [index] {:instruction instr :count newcount :dcdf newdcdf}))
-;;         (recur newdcdf (inc index) (dissoc counts instr))))))
-
-(defn process-adaptive-source
-  "Updates the adaptive genetic source for each generation."
+(defn get-next-concatenated-generators
   []
-  (let [counts (frequencies @current-instructions)]
-    (reset! current-instructions [])
-    (reset! adaptive-source []) ;; Does this work to reset?
-    (add-new-instructions counts))) ;; If we reset each time, all instructions are new...
+  ;; Concatenate flattened distinct parent instructions with kitchen sink
+  (let [s (flatten (distinct @current-parents))]
+    (reset! concatenated-generators (concat s (:atom-generators @push-argmap)))
+    (reset! current-parents '())))
 
-(defn finish-up
-  [return-val]
-  (println "\nAdaptive Source")
-  (doseq [item @adaptive-source]
-    (println item))
-  return-val)
+(defn fill-initial-concat
+  []
+  (let [instr (:atom-generators @push-argmap)]
+    (reset! concatenated-generators instr)))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; -----------------------------------------------------------------------------
 
 (defn pushgp
   "The top-level routine of pushgp."
@@ -357,6 +327,8 @@
   ([args]
    (reset! timer-atom (System/currentTimeMillis))
    (load-push-argmap args)
+  ;;  ;;; NEW
+   (fill-initial-concat)
    (when (some? (:record-host @push-argmap))
      (r/host! (str (:record-host @push-argmap))))
    (random/with-rng (random/make-mersennetwister-rng (:random-seed @push-argmap))
@@ -370,9 +342,6 @@
      (when (:print-timings @push-argmap)
        (r/config-data! [:initialization-ms] (:initialization @timer-atom)))
      (println "\n;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;")
-     ;; Code to initialize the starting adaptive genetic source.
-     (doseq [[index instruction] (map-indexed vector (:atom-generators @push-argmap))]
-       (swap! adaptive-source conj {:instruction instruction :count 1 :dcdf (inc index)}))
      (println "\nGenerating initial population...") (flush)
      (let [pop-agents (make-pop-agents @push-argmap)
            child-agents (make-child-agents @push-argmap)
@@ -382,8 +351,7 @@
          (let [[next-novelty-archive return-val]
                (process-generation rand-gens pop-agents child-agents
                                    generation novelty-archive @push-argmap)]
-           ;; Generation has been processed; now process the adaptive source
-           (process-adaptive-source)
+           (get-next-concatenated-generators)
            (if (nil? next-novelty-archive)
-             (finish-up return-val)
+             return-val
              (recur (inc generation) next-novelty-archive))))))))
