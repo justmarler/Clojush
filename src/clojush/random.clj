@@ -152,8 +152,8 @@
       (zipmap markers
               (map (fn [marker]
                      (case marker
-                       ;:instruction (random-atom atom-generators)
-                       :instruction (pseudo-random-atom atom-generators) ; new
+                       :instruction (random-atom atom-generators)
+                       ;:instruction (pseudo-random-atom atom-generators) ; new
                        :close (random-closes close-parens-probabilities)
                        :silent (if (< (lrand) silent-instruction-probability)
                                  true
@@ -200,8 +200,8 @@
                          (count atom-generators)))]
     (if (< (lrand) plushy-prob)
       :close
-      (pseudo-random-atom atom-generators)))) ; new
-      ;(random-atom atom-generators))))
+      ;(pseudo-random-atom atom-generators)))) ; new
+      (random-atom atom-generators))))
 
 (defn random-plushy-genome-with-size
   "Returns a random Plushy genome containing the given number of points."

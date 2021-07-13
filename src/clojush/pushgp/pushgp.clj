@@ -370,9 +370,6 @@
      (when (:print-timings @push-argmap)
        (r/config-data! [:initialization-ms] (:initialization @timer-atom)))
      (println "\n;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;")
-     ;; Code to initialize the starting adaptive genetic source.
-     (doseq [[index instruction] (map-indexed vector (:atom-generators @push-argmap))]
-       (swap! adaptive-source conj {:instruction instruction :count 1 :dcdf (inc index)}))
      (println "\nGenerating initial population...") (flush)
      (let [pop-agents (make-pop-agents @push-argmap)
            child-agents (make-child-agents @push-argmap)
@@ -382,8 +379,6 @@
          (let [[next-novelty-archive return-val]
                (process-generation rand-gens pop-agents child-agents
                                    generation novelty-archive @push-argmap)]
-           ;; Generation has been processed; now process the adaptive source
-           (process-adaptive-source)
            (if (nil? next-novelty-archive)
-             (finish-up return-val)
+             return-val
              (recur (inc generation) next-novelty-archive))))))))

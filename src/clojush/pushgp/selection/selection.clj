@@ -50,7 +50,4 @@
              update-in 
              [(:uuid selected)] 
              (fn [sel-count] (if (nil? sel-count) 1 (inc sel-count)))))
-    ;; Adaptive Genetic Source: Keep track of instructions for selected parents
-    (swap! current-instructions into (flatten (:program selected)))
     selected))
-
