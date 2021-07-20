@@ -305,6 +305,20 @@
                                   [next-novelty-archive nil])
           :else [nil (final-report generation best @push-argmap)])))
 
+;; IO-Tuned Genetic Source ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defn get-stacks
+  [v]
+  (cond
+    (boolean? v) [:boolean :vector_boolean]
+    (char? v) [:char]
+    (integer? v) [:integer :vector_integer]
+    (string? v) [:string :vector_string]
+    (float? v) [:float :vector_float]
+    :else (-> v
+              (println "Could not decide type for" v)
+              (System/exit))))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defn pushgp
   "The top-level routine of pushgp."
   ([] (pushgp '()))
@@ -324,6 +338,21 @@
      (when (:print-timings @push-argmap)
        (r/config-data! [:initialization-ms] (:initialization @timer-atom)))
      (println "\n;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;")
+     
+     ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+     ;; IO-Tuned Source
+     ;; Record the types of the inputs and outputs for biasing.
+    ;;  (let [[input output] (nth (:training-cases @push-argmap) 0)
+    ;;        result (set (into (get-stacks input) (get-stacks output)))]
+    ;;    (doseq [instruction (registered-for-stacks result)]
+    ;;      (swap! io-source conj instruction)))
+                    
+     (let [cases (set (flatten (:training-cases @push-argmap)))
+           stack-types (set (reduce into (map get-stacks cases)))]
+       (doseq [instruction (registered-for-stacks stack-types)]
+         (swap! io-source conj instruction)))
+     ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;             
+
      (println "\nGenerating initial population...") (flush)
      (let [pop-agents (make-pop-agents @push-argmap)
            child-agents (make-child-agents @push-argmap)
