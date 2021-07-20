@@ -292,6 +292,18 @@
                                       (when-not (:use-single-thread @push-argmap (apply await pop-agents))) ;; SYNCHRONIZE
                                       (reset! delay-archive [])))
                                   (timer @push-argmap :report)
+
+                                  ;; Simplification ;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+                                  (repeatedly 50 (let [_
+                                                       (auto-simplify-plush (select (map #(deref %) pop-agents) @push-argmap)
+                                                                            (:error-function @push-argmap)
+                                                                            (:training-cases @push-argmap)
+                                                                            10 0)]))
+                                  ;; (prn "passed are:" (:passed-set @the-map))
+                                  ;; (prn "failed are:" (:failed-set @the-map))
+                                  ;; (System/exit 0)
+                                  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
                                   (println "\nProducing offspring...") (flush)
                                   (produce-new-offspring pop-agents
                                                          child-agents
@@ -306,47 +318,84 @@
           :else [nil (final-report generation best @push-argmap)])))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Adaptive Genetic Source
+;; Type-Boosted Genetic Source
 
-(defn add-new-instructions
-  [cts]
-  (loop [dcdf 0;(:dcdf (last @adaptive-source)) Commented this out because new dcdf will be 0
-         counts cts]
-    (when (seq counts)
-      (let [key (first (keys counts))
-            value (get counts key)]
-        (swap! adaptive-source conj {:instruction key :count value :dcdf (+ value dcdf)})
-        (recur (+ dcdf value) (dissoc counts key))))))
-
-;; (defn update-adaptive-source
-;;   [cts]
-;;   (loop [dcdf 0
-;;          index 0
-;;          counts cts]
-;;     (if (= index (count @adaptive-source))
-;;       (add-new-instructions counts)
-;;       (let [item (nth @adaptive-source index)
-;;             instr (:instruction item)
-;;             currcount (:count item)
-;;             addition (get counts instr 0)
-;;             newcount (+ currcount addition)
-;;             newdcdf (+ dcdf newcount)]
-;;         (swap! adaptive-source #(assoc-in % [index] {:instruction instr :count newcount :dcdf newdcdf}))
-;;         (recur newdcdf (inc index) (dissoc counts instr))))))
-
-(defn process-adaptive-source
-  "Updates the adaptive genetic source for each generation."
+(def minx (atom [1]))
+(defn update-type-counts
   []
-  (let [counts (frequencies @current-instructions)]
-    (reset! current-instructions [])
-    (reset! adaptive-source []) ;; Does this work to reset?
-    (add-new-instructions counts))) ;; If we reset each time, all instructions are new...
+  (doseq [item (:passed-set @the-map)]
+    (let [instruction (:instruction item)
+          data (meta (get @instruction-table instruction))]
+      (if (and (symbol? instruction) (not (nil? data)))
+          ;; doseq for stack in stack-types
+          (doseq [stacktype (:stack-types data)]
+            (let [index (get @type-indices stacktype)
+                  basket (nth @type-boost index)
+                  ct (:count basket)
+                  dcdf (:dcdf basket)]
+              (swap! type-boost #(assoc-in % [index] {:basket :erc :count (+ 1 ct) :dcdf dcdf}))
+              (reset! minx [(min (nth @minx 0) (+ 1 ct))])))
+          ;; One of problem-specific, input, or erc instructions
+          (let [index (:erc @type-indices)
+                basket (nth @type-boost index)
+                ct (:count basket)
+                dcdf (:dcdf basket)]
+            (swap! type-boost #(assoc-in % [index] {:basket :erc :count (+ 1 ct) :dcdf dcdf}))
+            (reset! minx [(min (nth @minx 0) (+ 1 ct))])))))
+  (doseq [item (:failed-set @the-map)]
+    (let [instruction (:instruction item)
+          data (meta (get @instruction-table instruction))]
+      (if (and (symbol? instruction) (not (nil? data)))
+          ;; doseq for stack in stack-types
+        (doseq [stacktype (:stack-types data)]
+          (let [index (get @type-indices stacktype)
+                basket (nth @type-boost index)
+                ct (:count basket)
+                dcdf (:dcdf basket)]
+            (swap! type-boost #(assoc-in % [index] {:basket :erc :count (- 1 ct) :dcdf dcdf}))
+            (reset! minx [(min (nth @minx 0) (- 1 ct))])))
+          ;; One of problem-specific, input, or erc instructions
+        (let [index (:erc @type-indices)
+              basket (nth @type-boost index)
+              ct (:count basket)
+              dcdf (:dcdf basket)]
+          (swap! type-boost #(assoc-in % [index] {:basket :erc :count (- 1 ct) :dcdf dcdf}))
+          (reset! minx [(min (nth @minx 0) (- 1 ct))]))))))
+
+(defn absv [n] (max n (-' n)))
+(defn process-type-boosting
+  []
+  (update-type-counts)
+  (println @type-boost)
+  (println)
+  (reset! the-map {:passed-set #{} :failed-set #{}})
+  (let [m (nth @minx 0)
+        mymin (cond
+                (< m 0) (absv m)
+                (= m 0) 1
+                :else m)]
+    (reset! minx [1])
+    (loop [index 0
+           dcdf 0]
+      (when (< index (count @type-boost))
+        (let [t (nth @type-boost index)
+              ct (:count t)
+              newct (+ ct mymin)
+              newdcdf (+ dcdf newct)]
+          (swap! type-boost #(assoc-in % [index] {:basket :erc :count newct :dcdf newdcdf}))
+          (recur (inc index) newdcdf))))))
+
+(defn update-distro-record
+  []
+  (let [total (:dcdf (last @type-boost))]
+    (doseq [k (keys @distro-record)]
+      (let [index (k @type-indices)
+            c (:count (nth @type-boost index))]
+        (swap! distro-record assoc k (conj (k @distro-record) (/ c total)))))))
 
 (defn finish-up
   [return-val]
-  (println "\nAdaptive Source")
-  (doseq [item @adaptive-source]
-    (println item))
+  (println @distro-record)
   return-val)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -369,16 +418,43 @@
      (timer @push-argmap :initialization)
      (when (:print-timings @push-argmap)
        (r/config-data! [:initialization-ms] (:initialization @timer-atom)))
-     (println "\n;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;")
-     (println "\nGenerating initial population...") (flush)
-     (let [pop-agents (make-pop-agents @push-argmap)
-           child-agents (make-child-agents @push-argmap)
-           {:keys [rand-gens]} (make-rng @push-argmap)]
-       (loop [generation 0
-              novelty-archive '()]
-         (let [[next-novelty-archive return-val]
-               (process-generation rand-gens pop-agents child-agents
-                                   generation novelty-archive @push-argmap)]
-           (if (nil? next-novelty-archive)
-             return-val
-             (recur (inc generation) next-novelty-archive))))))))
+
+     ;;;;;;;;;;;;;;;; Type-boosted genetic source intialization ;;;;;;;;;;;;;;;;
+     ;; Map of "baskets" to the instructions within them. @type-map
+     (doseq [[_ instruction] (map-indexed vector (:atom-generators @push-argmap))]
+       (cond
+         (symbol? instruction) (let [data (meta (get @instruction-table instruction))]
+                                 (if (nil? data)
+                                   ; Add input instructions to ERC basket
+                                   (swap! type-map assoc :erc (conj (:erc @type-map) instruction))
+                                   ; Map instructions by metadata stack type
+                                   (doseq [type (:stack-types data)]
+                                     (swap! type-map assoc type (conj (type @type-map) instruction)))))
+         ; Add functions to ERC basket
+         (fn? instruction) (swap! type-map assoc :erc (conj (:erc @type-map) instruction))
+         ; Add problem-specific constants to ERC basket
+         :else (swap! type-map assoc :erc (conj (:erc @type-map) instruction))))
+     
+     ;; Discrete Cumulative Density of each Instruction "Basket". @type-boost
+     (doseq [[index key] (map-indexed vector (keys @type-map))]
+       (swap! type-boost conj {:basket key :count 1 :dcdf (inc index)})
+       (swap! type-indices conj {key index})
+       (swap! distro-record assoc key (conj [(/ 1 (count @type-map))])))
+     
+     ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+     (println " \n;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;"
+              (println "\nGenerating initial population...") (flush)
+              (let [pop-agents (make-pop-agents @push-argmap)
+                    child-agents (make-child-agents @push-argmap)
+                    {:keys [rand-gens]} (make-rng @push-argmap)]
+                (loop [generation 0
+                       novelty-archive '()]
+                  (let [[next-novelty-archive return-val]
+                        (process-generation rand-gens pop-agents child-agents
+                                            generation novelty-archive @push-argmap)]
+                    (process-type-boosting)
+                    (update-distro-record)
+                    (if (nil? next-novelty-archive)
+                      (finish-up return-val)
+                      (recur (inc generation) next-novelty-archive)))))))))

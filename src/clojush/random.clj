@@ -53,11 +53,21 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Adaptive Genetic Source Code
 
-;; All instructions that occur in an entire generation.
-(def current-instructions (atom []))
+(def type-boost (atom []))
 
-;; Total distribution of instructions across all generations.
-(def adaptive-source (atom []))
+(def type-map (atom {}))
+
+(def type-indices (atom {}))
+
+(def distro-record (atom {}))
+
+(def the-map (atom {:passed-set #{} :failed-set #{}}))
+
+;; ;; All instructions that occur in an entire generation.
+;; (def current-instructions (atom []))
+
+;; ;; Total distribution of instructions across all generations.
+;; (def adaptive-source (atom []))
 
 (defn parse-atom
   "Mimics the random-atom function to execute functional atoms before return."
@@ -107,30 +117,30 @@
   "Conduct binary search through the adaptive source to select an instruction
    to be used in mutation."
   [atom-generators]
-  (if (< 0.3 (rand)) ;; 70% adaptive, 30% kitchen sink
+  (if (< 0.2 (rand)) ;; 80% type-boosted, 20% kitchen sink
     (random-atom atom-generators)
     (loop [left 0
-           right (count @adaptive-source)
+           right (count @type-boost)
            start (quot (+ right left) 2)
-           index (rand-int (:dcdf (last @adaptive-source)))
-           mpi (nth @adaptive-source start)]
+           index (rand-int (:dcdf (last @type-boost)))
+           mpi (nth @type-boost start)]
       (cond
-      ;; Recur on right side (random index occurs to the right of the current instruction)
+      ;; Recur on right side (random index occurs to the right of the current basket)
         (>= index (:dcdf mpi)) (recur
                                 (inc start)
                                 right
                                 (quot (+ start right) 2)
                                 index
-                                (nth @adaptive-source (quot (+ start right) 2)))
-      ;; Current instruction holds the random index in its interval
-        (>= index (- (:dcdf mpi) (:count mpi))) (parse-atom (:instruction mpi))
-      ;; Recur on left side (random index occurs to left of current instruction)
+                                (nth @type-boost (quot (+ start right) 2)))
+      ;; Current basket holds the random index in its interval
+        (>= index (- (:dcdf mpi) (:count mpi))) (parse-atom (rand-nth ((:basket mpi) @type-map)))
+      ;; Recur on left side (random index occurs to left of current basket)
         :else (recur
                left
                start
                (quot (+ start left) 2)
                index
-               (nth @adaptive-source (quot (+ start left) 2)))))))
+               (nth @type-boost (quot (+ start left) 2)))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -152,8 +162,8 @@
       (zipmap markers
               (map (fn [marker]
                      (case marker
-                       :instruction (random-atom atom-generators)
-                       ;:instruction (pseudo-random-atom atom-generators) ; new
+                       ;:instruction (random-atom atom-generators)
+                       :instruction (pseudo-random-atom atom-generators) ; new
                        :close (random-closes close-parens-probabilities)
                        :silent (if (< (lrand) silent-instruction-probability)
                                  true
@@ -200,8 +210,8 @@
                          (count atom-generators)))]
     (if (< (lrand) plushy-prob)
       :close
-      ;(pseudo-random-atom atom-generators)))) ; new
-      (random-atom atom-generators))))
+      (pseudo-random-atom atom-generators)))) ; new
+      ;(random-atom atom-generators))))
 
 (defn random-plushy-genome-with-size
   "Returns a random Plushy genome containing the given number of points."
@@ -243,4 +253,3 @@
                                     atom-generators
                                     argmap)}
       argmap)))
-

@@ -155,15 +155,87 @@
                                                   (map vector silent-values (range))))
                                      '())
         indices-to-silence (choose-random-k-without-replacement silencings indices-available-to-silence)
+        curr indices-to-silence
         indices-to-unsilence (choose-random-k-without-replacement unsilencings indices-available-to-unsilence)
         indices-to-no-op (choose-random-k-without-replacement no-opings indices-available-to-no-op)]
     ; Order of changes is: unsilence -> no-op -> silence
     ; This makes it so silencings take highest priority.
-    (-> genome
-      vec      ; Needs to be a vector for change-silent-at-indices
-      (change-silent-at-indices indices-to-unsilence false)
-      (change-silent-at-indices indices-to-no-op :no-op)
-      (change-silent-at-indices indices-to-silence true))))
+    (def curr-ret
+      (map #(get genome %) curr))
+    (def ret-set
+      (set curr-ret))
+    (def new-gen
+      (-> genome
+          vec      ; Needs to be a vector for change-silent-at-indices
+          (change-silent-at-indices indices-to-unsilence false)
+          (change-silent-at-indices indices-to-no-op :no-op)
+          (change-silent-at-indices indices-to-silence true)))
+    (vector ret-set new-gen)))
+
+    (defn get-partial-errors
+      "Takes a genome and a map of transformation/probability pairs. Picks a transformation
+       probabilistically, and then applies it to the genome by silencing/unsilencing/no-oping
+       random genes that aren't already of that type."
+      [program new-program cases error-function]
+      (let [old-par (:errors (error-function {:program program} cases true))
+            new-par (:errors (error-function {:program new-program} cases true))]
+        (vector old-par new-par)))
+;; (defn auto-simplify-plush
+;;   "Automatically simplifies the genome of an individual without changing its error vector on
+;;    the training set, based on the error-function. steps is the number of hill-climbing evaluations
+;;    to test. print-progress-interval is how often to print progress of the simplification; if it is
+;;    set to 0, then nothing will be printed.
+;;    simplification-step-probabilities is a map of probabilities that are used to select what change
+;;    to make during each step of the simplification. Each change is represented as a map with the
+;;    following options for the keys, each of which has an integer of how many of those changes to make:
+;;      :silence - number of unsilenced or no-op genes to set :silent = true
+;;      :unsilence - number of silenced or no-op genes to set :silent = false
+;;      :no-op - number of unsilenced or silenced genes to set :silent = :no-op"
+;;   ([ind error-function steps print-progress-interval]
+;;     (auto-simplify-plush ind error-function steps print-progress-interval
+;;                          {{:silence 1} 0.5
+;;                           {:silence 2} 0.3
+;;                           {:silence 3} 0.1
+;;                           {:silence 4} 0.1
+;;                           ;{:silence 1 :unsilence 1} 0.05  ;Not used by default
+;;                           ;{:silence 2 :unsilence 1} 0.1   ;Not used by default
+;;                           ;{:silence 3 :unsilence 1} 0.05  ;Not used by default
+;;                           ;{:no-op 1} 0.05                 ;Not used by default
+;;                           }))
+;;   ([ind error-function steps print-progress-interval simplification-step-probabilities]
+;;     (when (not (zero? print-progress-interval))
+;;       (printf "\nAuto-simplifying Plush genome with starting size: %s" (count (:genome ind))))
+;;     (loop [step 0
+;;            genome (:genome ind)
+;;            program (if (:program ind)
+;;                      (:program ind)
+;;                      (translate-plush-genome-to-push-program ind
+;;                                                              {:max-points (* 10 (count genome))}))
+;;            errors (if (:errors ind)
+;;                     (:errors ind)
+;;                     (:errors (error-function ind)))]
+;;       (when (and (not (zero? print-progress-interval))
+;;                  (or (>= step steps)
+;;                      (zero? (mod step print-progress-interval))))
+;;         (println "\nstep:" step)
+;;         (println "genome:" (pr-str (not-lazy genome)))
+;;         (println "program:" (pr-str (not-lazy program)))
+;;         (println "errors:" (not-lazy errors))
+;;         (println "genome size:" (count genome))
+;;         (println "program size:" (count-points program)))
+;;       (if (>= step steps)
+;;         (make-individual :genome genome :program program :errors errors :total-error (apply + errors)
+;;                          :history (:history ind) :genetic-operators :simplification)
+;;         (let [[curr-ele new-genome] (apply-simplification-step-to-genome genome simplification-step-probabilities)
+;;               new-program (translate-plush-genome-to-push-program (assoc ind :genome new-genome)
+;;                                                                   {:max-points (* 10 (count genome))})
+;;               new-errors (:errors (error-function {:program new-program}))]
+;;           (println curr-ele)
+;;           (System/exit 0)
+;;           (if (and (= new-errors errors)
+;;                    (<= (count-points new-program) (count-points program)))
+;;             (recur (inc step) new-genome new-program new-errors)
+;;             (recur (inc step) genome program errors)))))))
 
 (defn auto-simplify-plush
   "Automatically simplifies the genome of an individual without changing its error vector on
@@ -176,47 +248,54 @@
      :silence - number of unsilenced or no-op genes to set :silent = true
      :unsilence - number of silenced or no-op genes to set :silent = false
      :no-op - number of unsilenced or silenced genes to set :silent = :no-op"
-  ([ind error-function steps print-progress-interval]
-    (auto-simplify-plush ind error-function steps print-progress-interval
-                         {{:silence 1} 0.5
-                          {:silence 2} 0.3
-                          {:silence 3} 0.1
-                          {:silence 4} 0.1
+  ([ind error-function test-cases steps print-progress-interval]
+   (auto-simplify-plush ind error-function test-cases steps print-progress-interval
+                        {{:silence 1} 0.5
+                         {:silence 2} 0.3
+                         {:silence 3} 0.1
+                         {:silence 4} 0.1
                           ;{:silence 1 :unsilence 1} 0.05  ;Not used by default
                           ;{:silence 2 :unsilence 1} 0.1   ;Not used by default
                           ;{:silence 3 :unsilence 1} 0.05  ;Not used by default
                           ;{:no-op 1} 0.05                 ;Not used by default
-                          }))
-  ([ind error-function steps print-progress-interval simplification-step-probabilities]
-    (when (not (zero? print-progress-interval))
-      (printf "\nAuto-simplifying Plush genome with starting size: %s" (count (:genome ind))))
-    (loop [step 0
-           genome (:genome ind)
-           program (if (:program ind)
-                     (:program ind)
-                     (translate-plush-genome-to-push-program ind
-                                                             {:max-points (* 10 (count genome))}))
-           errors (if (:errors ind)
-                    (:errors ind)
-                    (:errors (error-function ind)))]
-      (when (and (not (zero? print-progress-interval))
-                 (or (>= step steps)
-                     (zero? (mod step print-progress-interval))))
-        (println "\nstep:" step)
-        (println "genome:" (pr-str (not-lazy genome)))
-        (println "program:" (pr-str (not-lazy program)))
-        (println "errors:" (not-lazy errors))
-        (println "genome size:" (count genome))
-        (println "program size:" (count-points program)))
-      (if (>= step steps)
-        (make-individual :genome genome :program program :errors errors :total-error (apply + errors)
-                         :history (:history ind) :genetic-operators :simplification)
-        (let [new-genome (apply-simplification-step-to-genome genome simplification-step-probabilities)
-              new-program (translate-plush-genome-to-push-program (assoc ind :genome new-genome)
-                                                                  {:max-points (* 10 (count genome))})
-              new-errors (:errors (error-function {:program new-program}))]
-          (if (and (= new-errors errors)
-                   (<= (count-points new-program) (count-points program)))
-            (recur (inc step) new-genome new-program new-errors)
-            (recur (inc step) genome program errors)))))))
-
+                         }))
+  ([ind error-function test-cases steps print-progress-interval simplification-step-probabilities]
+   (when (not (zero? print-progress-interval))
+     (printf "\nAuto-simplifying Plush genome with starting size: %s" (count (:genome ind))))
+   (loop [step 0
+          genome (:genome ind)
+          program (if (:program ind)
+                    (:program ind)
+                    (translate-plush-genome-to-push-program ind
+                                                            {:max-points (* 10 (count genome))}))
+          errors (if (:errors ind)
+                   (:errors ind)
+                   (:errors (error-function ind)))]
+     (when (and (not (zero? print-progress-interval))
+                (or (>= step steps)
+                    (zero? (mod step print-progress-interval))))
+       (println "\nstep:" step)
+       (println "genome:" (pr-str (not-lazy genome)))
+       (println "program:" (pr-str (not-lazy program)))
+       (println "errors:" (not-lazy errors))
+       (println "genome size:" (count genome))
+       (println "program size:" (count-points program)))
+     (println "atom set is" (:passed-set @the-map) "failed" (:failed-set @the-map))
+     (if (>= step steps)
+       (vector (:passed-set @the-map) (:failed-set @the-map))
+       (let [[curr-ele new-genome] (apply-simplification-step-to-genome genome simplification-step-probabilities)
+             new-program (translate-plush-genome-to-push-program {:genome new-genome}
+                                                                 {:max-points (* 10 (count genome))})
+             cases (list (rand-nth test-cases) (rand-nth test-cases))
+             [old-par new-par] (get-partial-errors program new-program cases error-function)
+             new-errors (:errors (error-function {:program new-program}))]
+         (if (and (= new-par old-par)
+                  (<= (count-points new-program) (count-points program)))
+           (do (if (not (= #{} (:failed-set @the-map)))
+                 (swap! the-map assoc :failed-set (clojure.set/union curr-ele (:failed-set @the-map)))
+                 (swap! the-map assoc :failed-set curr-ele))
+               (recur (inc step) new-genome new-program new-errors))
+           (do (if (not (= #{} (:passed-set @the-map)))
+                 (swap! the-map assoc :passed-set (clojure.set/union curr-ele (:passed-set @the-map)))
+                 (swap! the-map assoc :passed-set curr-ele))
+               (recur (inc step) genome program errors))))))))
